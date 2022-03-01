@@ -47,6 +47,7 @@ type Config struct {
 	overwriteSliceWithEmptyValue bool
 	sliceDeepCopy                bool
 	debug                        bool
+	revert                       bool
 }
 
 type Transformers interface {
@@ -62,6 +63,12 @@ func deepMerge(dst, src reflect.Value, visited map[uintptr]*visit, depth int, co
 	overwriteWithEmptySrc := config.overwriteWithEmptyValue
 	overwriteSliceWithEmptySrc := config.overwriteSliceWithEmptyValue
 	sliceDeepCopy := config.sliceDeepCopy
+	revert := config.revert
+	if revert {
+		overwrite = false
+		overwriteSliceWithEmptySrc = false
+		overwriteWithEmptySrc = false
+	}
 
 	if !src.IsValid() {
 		return
@@ -95,6 +102,12 @@ func deepMerge(dst, src reflect.Value, visited map[uintptr]*visit, depth int, co
 					return
 				}
 			}
+		} else if revert {
+			if dst.CanSet() {
+				if reflect.DeepEqual(dst, src) {
+					dst.Set(reflect.New(src.Type()))
+				}
+			}
 		} else {
 			if dst.CanSet() && (isReflectNil(dst) || overwrite) && (!isEmptyValue(src) || overwriteWithEmptySrc) {
 				dst.Set(src)
@@ -125,7 +138,11 @@ func deepMerge(dst, src reflect.Value, visited map[uintptr]*visit, depth int, co
 			dstElement := dst.MapIndex(key)
 			switch srcElement.Kind() {
 			case reflect.Chan, reflect.Func, reflect.Map, reflect.Interface, reflect.Slice:
-				if srcElement.IsNil() {
+				if revert {
+					if reflect.DeepEqual(dstElement, srcElement) {
+						dst.SetMapIndex(key, reflect.Zero(srcElement.Type()))
+					}
+				} else if srcElement.IsNil() {
 					if overwrite {
 						dst.SetMapIndex(key, srcElement)
 					}
@@ -161,6 +178,36 @@ func deepMerge(dst, src reflect.Value, visited map[uintptr]*visit, depth int, co
 						dstSlice = reflect.MakeSlice(srcSlice.Type(), 0, srcSlice.Len())
 					} else {
 						dstSlice = reflect.ValueOf(dstElement.Interface())
+					}
+
+					if revert {
+						newDstSlice := reflect.MakeSlice(dstSlice.Type(), 0, dstSlice.Len())
+						for i := 0; i < dstSlice.Len(); i++ {
+							dstElement := dstSlice.Index(i)
+							if dstElement.CanInterface() {
+								dstElement = reflect.ValueOf(dstElement.Interface())
+							}
+							var found bool
+							for j := 0; j < srcSlice.Len(); j++ {
+								srcElement := srcSlice.Index(j)
+								if srcElement.CanInterface() {
+									srcElement = reflect.ValueOf(srcElement.Interface())
+								}
+								found = reflect.DeepEqual(srcElement.Interface(), dstElement.Interface())
+								if found {
+									break
+								}
+							}
+							if found {
+								if !config.deduplicateSliceAppending {
+									continue
+								}
+							}
+							newDstSlice = reflect.Append(newDstSlice, dstSlice.Index(i))
+						}
+
+						dst.SetMapIndex(key, newDstSlice)
+						continue
 					}
 
 					if (!isEmptyValue(src) || overwriteWithEmptySrc || overwriteSliceWithEmptySrc) && (overwrite || isEmptyValue(dst)) && !config.AppendSlice && !sliceDeepCopy {
@@ -234,6 +281,37 @@ func deepMerge(dst, src reflect.Value, visited map[uintptr]*visit, depth int, co
 		if !dst.CanSet() {
 			break
 		}
+
+		if revert {
+			newDst := reflect.MakeSlice(dst.Type(), 0, dst.Len())
+			for i := 0; i < dst.Len(); i++ {
+				dstElement := dst.Index(i)
+				if dstElement.CanInterface() {
+					dstElement = reflect.ValueOf(dstElement.Interface())
+				}
+				var found bool
+				for j := 0; j < src.Len(); j++ {
+					srcElement := src.Index(j)
+					if srcElement.CanInterface() {
+						srcElement = reflect.ValueOf(srcElement.Interface())
+					}
+					found = reflect.DeepEqual(dstElement.Interface(), srcElement.Interface())
+					if found {
+						break
+					}
+				}
+				if found {
+					if !config.deduplicateSliceAppending {
+						continue
+					}
+				}
+				newDst = reflect.Append(newDst, dst.Index(i))
+			}
+
+			dst.Set(newDst)
+			return
+		}
+
 		if (!isEmptyValue(src) || overwriteWithEmptySrc || overwriteSliceWithEmptySrc) && (overwrite || isEmptyValue(dst)) && !config.AppendSlice && !sliceDeepCopy {
 			dst.Set(src)
 		} else if config.AppendSlice {
@@ -378,6 +456,11 @@ func WithOverrideEmptySlice(config *Config) {
 // WithAppendSlice will make merge append slices instead of overwriting it.
 func WithAppendSlice(config *Config) {
 	config.AppendSlice = true
+}
+
+// WithRevert will revert anything of src.
+func WithRevert(config *Config) {
+	config.revert = true
 }
 
 // WithAppendSliceNonRepeated will make merge append slices instead of overwriting it,

@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imdario/mergo"
 	"gopkg.in/yaml.v2"
+
+	"github.com/imdario/mergo"
 )
 
 type simpleTest struct {
@@ -305,6 +306,8 @@ func TestSlice(t *testing.T) {
 	testSlice(t, []int{1}, []int{1}, []int{1}, mergo.WithAppendSliceNonRepeated)
 	testSlice(t, []int{1, 3}, []int{1, 2}, []int{1, 3, 1, 2}, mergo.WithAppendSlice)
 	testSlice(t, []int{1, 3}, []int{1, 2}, []int{1, 3, 2}, mergo.WithAppendSliceNonRepeated)
+	testSlice(t, []int{1, 3, 5, 7}, []int{1, 2, 3}, []int{5, 7}, mergo.WithRevert)
+	testSlice(t, []int{1, 3}, []int{1, 2}, []int{1, 3}, mergo.WithRevert, mergo.WithAppendSliceNonRepeated)
 }
 
 func TestEmptyMaps(t *testing.T) {
